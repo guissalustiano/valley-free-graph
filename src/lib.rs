@@ -13,9 +13,9 @@ use petgraph::{
 
 #[derive(Debug, PartialEq, Eq, Hash, Copy, Clone)]
 pub enum RelType {
-    ProviderToCustomer,
-    PearToPear,
     CustomerToProvider,
+    PearToPear,
+    ProviderToCustomer,
 }
 
 // Required to work as a edge
@@ -105,11 +105,11 @@ impl Topology {
         Ok(Topology::from_edges(edges))
     }
 
-    fn asn_of(&self, asn: NodeIndex) -> u32 {
+    pub fn asn_of(&self, asn: NodeIndex) -> u32 {
         *self.graph.node_weight(asn).unwrap()
     }
 
-    fn index_of(&self, asn: u32) -> NodeIndex {
+    pub fn index_of(&self, asn: u32) -> NodeIndex {
         *self.asn2index.get(&asn).unwrap()
     }
 
