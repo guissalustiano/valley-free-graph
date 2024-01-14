@@ -303,6 +303,8 @@ impl Topology {
 
 #[cfg(test)]
 mod test {
+    use petgraph::algo::is_cyclic_directed;
+
     use super::*;
 
     /*
@@ -436,5 +438,6 @@ mod test {
         assert!(has_edge(3, 6));
 
         assert_eq!(topo.raw_graph().edge_count(), 7);
+        assert!(!is_cyclic_directed(topo.raw_graph()));
     }
 }
