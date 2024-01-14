@@ -26,7 +26,6 @@ impl Default for RelType {
 }
 
 pub struct Topology {
-    asn2index: HashMap<u32, NodeIndex>,
     graph: DiGraph<u32, RelType>,
 }
 
@@ -59,7 +58,7 @@ impl Topology {
             )
         }));
 
-        Topology { asn2index, graph }
+        Topology { graph }
     }
 
     pub fn from_caida(reader: impl std::io::Read) -> Result<Self, TopologyError> {
@@ -105,12 +104,14 @@ impl Topology {
         Ok(Topology::from_edges(edges))
     }
 
-    pub fn asn_of(&self, asn: NodeIndex) -> u32 {
-        *self.graph.node_weight(asn).unwrap()
+    pub fn asn_of(&self, index: NodeIndex) -> u32 {
+        *self.graph.node_weight(index).unwrap()
     }
 
-    pub fn index_of(&self, asn: u32) -> NodeIndex {
-        *self.asn2index.get(&asn).unwrap()
+    pub fn index_of(&self, asn: u32) -> Option<NodeIndex> {
+        self.graph
+            .node_indices()
+            .find(|&index| self.asn_of(index) == asn)
     }
 
     pub fn all_asns(&self) -> HashSet<u32> {
@@ -121,61 +122,67 @@ impl Topology {
             .collect()
     }
 
-    pub fn providers_of(&self, asn: u32) -> HashSet<u32> {
+    pub fn providers_of(&self, asn: u32) -> Option<HashSet<u32>> {
         let incoming = self
             .graph
-            .edges_directed(self.index_of(asn), petgraph::Direction::Incoming)
+            .edges_directed(self.index_of(asn)?, petgraph::Direction::Incoming)
             .filter(|edge| edge.weight() == &RelType::ProviderToCustomer) // could be PearToPear
             .map(|edge| edge.source());
 
         let outgoing = self
             .graph
-            .edges_directed(self.index_of(asn), petgraph::Direction::Outgoing)
+            .edges_directed(self.index_of(asn)?, petgraph::Direction::Outgoing)
             .filter(|edge| edge.weight() == &RelType::CustomerToProvider)
             .map(|edge| edge.target());
 
-        incoming
-            .chain(outgoing)
-            .map(|asn| self.asn_of(asn))
-            .collect()
+        Some(
+            incoming
+                .chain(outgoing)
+                .map(|asn| self.asn_of(asn))
+                .collect(),
+        )
     }
 
-    pub fn customers_of(&self, asn: u32) -> HashSet<u32> {
+    pub fn customers_of(&self, asn: u32) -> Option<HashSet<u32>> {
         let outgoing = self
             .graph
-            .edges_directed(self.index_of(asn), petgraph::Direction::Outgoing)
+            .edges_directed(self.index_of(asn)?, petgraph::Direction::Outgoing)
             .filter(|edge| edge.weight() == &RelType::ProviderToCustomer) // could be PearToPear
             .map(|edge| edge.target());
 
         let incoming = self
             .graph
-            .edges_directed(self.index_of(asn), petgraph::Direction::Incoming)
+            .edges_directed(self.index_of(asn)?, petgraph::Direction::Incoming)
             .filter(|edge| edge.weight() == &RelType::CustomerToProvider)
             .map(|edge| edge.source());
 
-        outgoing
-            .chain(incoming)
-            .map(|asn| self.asn_of(asn))
-            .collect()
+        Some(
+            outgoing
+                .chain(incoming)
+                .map(|asn| self.asn_of(asn))
+                .collect(),
+        )
     }
 
-    pub fn peers_of(&self, asn: u32) -> HashSet<u32> {
+    pub fn peers_of(&self, asn: u32) -> Option<HashSet<u32>> {
         let outgoing = self
             .graph
-            .edges_directed(self.index_of(asn), petgraph::Direction::Outgoing)
+            .edges_directed(self.index_of(asn)?, petgraph::Direction::Outgoing)
             .filter(|edge| edge.weight() == &RelType::PearToPear)
             .map(|edge| edge.target());
 
         let incoming = self
             .graph
-            .edges_directed(self.index_of(asn), petgraph::Direction::Incoming)
+            .edges_directed(self.index_of(asn)?, petgraph::Direction::Incoming)
             .filter(|edge| edge.weight() == &RelType::PearToPear)
             .map(|edge| edge.source());
 
-        outgoing
-            .chain(incoming)
-            .map(|asn| self.asn_of(asn))
-            .collect()
+        Some(
+            outgoing
+                .chain(incoming)
+                .map(|asn| self.asn_of(asn))
+                .collect(),
+        )
     }
 
     /*
@@ -230,7 +237,7 @@ impl Topology {
         while !up_path_queue.is_empty() {
             let asn = up_path_queue.pop_front().unwrap(); // While check if has elements
 
-            for provider_asn in self.providers_of(asn) {
+            for provider_asn in self.providers_of(asn).unwrap() {
                 if up_seen.contains(&provider_asn) {
                     continue;
                 }
@@ -249,7 +256,7 @@ impl Topology {
         // Iterate over all ASes reach by UP
         // They can only do one PEAR, so we don't need a queue
         for asn in up_seen.clone().into_iter() {
-            for peer_asn in self.peers_of(asn) {
+            for peer_asn in self.peers_of(asn).unwrap() {
                 peer_seen.insert(peer_asn);
                 graph.add_edge(
                     *node_map.get(&asn).unwrap(),
@@ -272,7 +279,7 @@ impl Topology {
         while !down_path_queue.is_empty() {
             let asn = down_path_queue.pop_front().unwrap();
 
-            for customer_asn in self.customers_of(asn) {
+            for customer_asn in self.customers_of(asn).unwrap() {
                 if up_seen.contains(&customer_asn) {
                     continue;
                 }
@@ -290,14 +297,16 @@ impl Topology {
             }
         }
 
-        Topology {
-            asn2index: node_map,
-            graph,
-        }
+        // assert!(!is_cyclic_directed(&graph));
+        Topology { graph }
     }
 
     pub fn raw_graph(&self) -> &DiGraph<u32, RelType> {
         &self.graph
+    }
+
+    pub fn raw_graph_mut(&mut self) -> &mut DiGraph<u32, RelType> {
+        &mut self.graph
     }
 }
 
@@ -341,30 +350,30 @@ mod test {
     fn test_providers() {
         let topo = diamond_topology();
 
-        assert_eq!(topo.providers_of(1), [].into());
-        assert_eq!(topo.providers_of(2), [1].into());
-        assert_eq!(topo.providers_of(3), [1].into());
-        assert_eq!(topo.providers_of(4), [2, 3].into());
+        assert_eq!(topo.providers_of(1), Some([].into()));
+        assert_eq!(topo.providers_of(2), Some([1].into()));
+        assert_eq!(topo.providers_of(3), Some([1].into()));
+        assert_eq!(topo.providers_of(4), Some([2, 3].into()));
     }
 
     #[test]
     fn test_customers() {
         let topo = diamond_topology();
 
-        assert_eq!(topo.customers_of(1), [3, 2].into());
-        assert_eq!(topo.customers_of(2), [4].into());
-        assert_eq!(topo.customers_of(3), [4].into());
-        assert_eq!(topo.customers_of(4), [].into());
+        assert_eq!(topo.customers_of(1), Some([3, 2].into()));
+        assert_eq!(topo.customers_of(2), Some([4].into()));
+        assert_eq!(topo.customers_of(3), Some([4].into()));
+        assert_eq!(topo.customers_of(4), Some([].into()));
     }
 
     #[test]
     fn test_peers() {
         let topo = diamond_topology();
 
-        assert_eq!(topo.peers_of(1), [].into());
-        assert_eq!(topo.peers_of(2), [3].into());
-        assert_eq!(topo.peers_of(3), [2].into());
-        assert_eq!(topo.peers_of(4), [].into());
+        assert_eq!(topo.peers_of(1), Some([].into()));
+        assert_eq!(topo.peers_of(2), Some([3].into()));
+        assert_eq!(topo.peers_of(3), Some([2].into()));
+        assert_eq!(topo.peers_of(4), Some([].into()));
     }
 
     #[test]
@@ -422,7 +431,7 @@ mod test {
 
         let has_edge = |asn1: u32, asn2: u32| {
             topo.raw_graph()
-                .find_edge(topo.index_of(asn1), topo.index_of(asn2))
+                .find_edge(topo.index_of(asn1).unwrap(), topo.index_of(asn2).unwrap())
                 .is_some()
         };
 
