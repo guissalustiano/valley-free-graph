@@ -26,6 +26,8 @@ on the root directory.
 
 The examples are available in the [`examples/`](examples/) direction.
 
+You can run it with `cargo run --example=<filename without .rs>`.
+
 ## References
 This library is highly inspired by [valley-free from bgpkit](https://github.com/bgpkit/valley-free),
 but try to return a subset of all paths instead, return the whole graph, and do what you want with 
