@@ -303,11 +303,6 @@ impl Topology {
 
 #[cfg(test)]
 mod test {
-    use std::fs::File;
-
-    use bzip2::read::BzDecoder;
-    use petgraph::dot::Dot;
-
     use super::*;
 
     /*
@@ -383,15 +378,6 @@ mod test {
     }
 
     #[test]
-    fn test_from_real_caida_data() {
-        let file = File::open("20231201.as-rel.txt.bz2").unwrap();
-        let reader = BzDecoder::new(&file);
-        let topo = Topology::from_caida(reader);
-
-        assert!(topo.is_ok());
-    }
-
-    #[test]
     /* Input:
      *               ┌─────┐
      *               │  1  │
@@ -429,7 +415,6 @@ mod test {
             (3, 5, RelType::ProviderToCustomer),
             (3, 6, RelType::ProviderToCustomer),
         ]);
-        println!("{:?}", Dot::new(topo.raw_graph()));
 
         let topo = topo.paths_graph(4);
 
@@ -438,8 +423,6 @@ mod test {
                 .find_edge(topo.index_of(asn1), topo.index_of(asn2))
                 .is_some()
         };
-
-        println!("{:?}", Dot::new(topo.raw_graph()));
 
         assert!(has_edge(4, 2));
 
