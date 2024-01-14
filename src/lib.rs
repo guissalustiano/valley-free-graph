@@ -25,187 +25,10 @@ impl Default for RelType {
     }
 }
 
-pub trait TopologyExt {
-    fn all_asns(&self) -> HashSet<u32>;
-    fn asn_of(&self, asn: NodeIndex) -> u32;
-    fn providers_of(&self, asn: u32) -> HashSet<u32>;
-    fn customers_of(&self, asn: u32) -> HashSet<u32>;
-    fn peers_of(&self, asn: u32) -> HashSet<u32>;
-
-    /*
-     * Given the following topology:
-     *
-     *               ┌─────┐
-     *               │     │
-     *               └──┬──┘
-     *           ┌──────┴─────┐
-     *        ┌──▼──┐      ┌──▼──┐
-     *        │     ◄──────►     │
-     *        └──┬──┘      └──┬──┘
-     *     ┌─────┴────┐  ┌────┴────┐
-     *  ┌──▼──┐     ┌─▼──▼┐     ┌──▼──┐
-     *  │     │     │     │     │     │
-     *  └─────┘     └─────┘     └─────┘
-     *
-     *  This method generate a DAG with all paths from the given AS to all other AS-relationship
-     *  following the valley-free principle.
-     *
-     *              ┌─────┐
-     *              │     │
-     *              └──▲──┘
-     *          ┌──────┴─────┐
-     *       ┌──┴──┐      ┌──▼──┐
-     *       │     ├──────►     │
-     *       └──▲──┘      └──┬──┘
-     *    ┌─────┴────┐  ┌────┴────┐
-     * ┌──┴──┐     ┌─▼──▼┐     ┌──▼──┐
-     * │     │     │     │     │     │
-     * └─────┘     └─────┘     └─────┘
-     *
-     * You can use this graph to calculate the shortest path or even list all paths using the
-     * petgraph library.
-     */
-    fn paths_graph(&self, asn: u32) -> DiGraph<u32, RelType> {
-        let mut graph = DiGraph::new();
-
-        let node_map: HashMap<u32, NodeIndex> = self
-            .all_asns()
-            .into_iter()
-            .map(|asn| (asn, graph.add_node(asn)))
-            .collect();
-
-        let mut up_path_queue = VecDeque::<u32>::new();
-        let mut seen = HashSet::new();
-
-        // add first
-        up_path_queue.push_back(asn);
-        seen.insert(asn);
-
-        while !up_path_queue.is_empty() {
-            let asn = up_path_queue.pop_front().unwrap(); // While check if has elements
-
-            for provider_asn in self.providers_of(asn) {
-                if seen.contains(&provider_asn) {
-                    continue;
-                }
-                dbg!(asn, provider_asn);
-
-                seen.insert(provider_asn);
-                up_path_queue.push_back(provider_asn);
-                graph.add_edge(
-                    *node_map.get(&asn).unwrap(),
-                    *node_map.get(&provider_asn).unwrap(),
-                    RelType::CustomerToProvider,
-                );
-            }
-        }
-
-        // Iterate over all ASes reach by UP
-        // They can only do one PEAR, so we don't need a queue
-        for asn in seen.clone().into_iter() {
-            for peer_asn in self.peers_of(asn) {
-                seen.insert(peer_asn);
-                graph.add_edge(
-                    *node_map.get(&asn).unwrap(),
-                    *node_map.get(&peer_asn).unwrap(),
-                    RelType::PearToPear,
-                );
-            }
-        }
-
-        let mut down_path_queue = VecDeque::<u32>::new();
-        for asn in seen.iter() {
-            down_path_queue.push_back(*asn);
-        }
-
-        while !down_path_queue.is_empty() {
-            let asn = down_path_queue.pop_front().unwrap();
-
-            for customer_asn in self.customers_of(asn) {
-                if seen.contains(&customer_asn) {
-                    continue;
-                }
-
-                seen.insert(customer_asn);
-                down_path_queue.push_back(customer_asn);
-                graph.add_edge(
-                    *node_map.get(&asn).unwrap(),
-                    *node_map.get(&customer_asn).unwrap(),
-                    RelType::ProviderToCustomer,
-                );
-            }
-        }
-
-        graph
-    }
+pub struct Topology {
+    asn2index: HashMap<u32, NodeIndex>,
+    graph: DiGraph<u32, RelType>,
 }
-
-impl TopologyExt for DiGraph<u32, RelType> {
-    fn all_asns(&self) -> HashSet<u32> {
-        self.raw_nodes()
-            .iter()
-            .skip(1) // skip the first node, which is the root
-            .map(|node| node.weight)
-            .collect()
-    }
-
-    fn asn_of(&self, asn: NodeIndex) -> u32 {
-        *self.node_weight(asn).unwrap()
-    }
-
-    fn providers_of(&self, asn: u32) -> HashSet<u32> {
-        let incoming = self
-            .edges_directed(asn.into(), petgraph::Direction::Incoming)
-            .filter(|edge| edge.weight() == &RelType::ProviderToCustomer) // could be PearToPear
-            .map(|edge| edge.source());
-
-        let outgoing = self
-            .edges_directed(asn.into(), petgraph::Direction::Outgoing)
-            .filter(|edge| edge.weight() == &RelType::CustomerToProvider)
-            .map(|edge| edge.target());
-
-        incoming
-            .chain(outgoing)
-            .map(|asn| self.asn_of(asn))
-            .collect()
-    }
-
-    fn customers_of(&self, asn: u32) -> HashSet<u32> {
-        let outgoing = self
-            .edges_directed(asn.into(), petgraph::Direction::Outgoing)
-            .filter(|edge| edge.weight() == &RelType::ProviderToCustomer) // could be PearToPear
-            .map(|edge| edge.target());
-
-        let incoming = self
-            .edges_directed(asn.into(), petgraph::Direction::Incoming)
-            .filter(|edge| edge.weight() == &RelType::CustomerToProvider)
-            .map(|edge| edge.source());
-
-        outgoing
-            .chain(incoming)
-            .map(|asn| self.asn_of(asn))
-            .collect()
-    }
-
-    fn peers_of(&self, asn: u32) -> HashSet<u32> {
-        let outgoing = self
-            .edges_directed(asn.into(), petgraph::Direction::Outgoing)
-            .filter(|edge| edge.weight() == &RelType::PearToPear)
-            .map(|edge| edge.target());
-
-        let incoming = self
-            .edges_directed(asn.into(), petgraph::Direction::Incoming)
-            .filter(|edge| edge.weight() == &RelType::PearToPear)
-            .map(|edge| edge.source());
-
-        outgoing
-            .chain(incoming)
-            .map(|asn| self.asn_of(asn))
-            .collect()
-    }
-}
-
-pub struct Topology(DiGraph<u32, RelType>);
 
 #[derive(Debug)]
 pub enum TopologyError {
@@ -216,21 +39,27 @@ pub enum TopologyError {
 
 impl Topology {
     pub fn from_edges(edges: Vec<(u32, u32, RelType)>) -> Self {
-        let nodes = edges
+        let mut graph = DiGraph::new();
+
+        let nodes: HashSet<u32> = edges
             .iter()
             .flat_map(|(asn1, asn2, _)| vec![*asn1, *asn2])
-            .collect::<HashSet<u32>>();
+            .collect();
 
-        // create node with defaul value (0)
-        let mut graph = DiGraph::from_edges(edges);
+        let asn2index: HashMap<u32, NodeIndex> = nodes
+            .into_iter()
+            .map(|asn| (asn, graph.add_node(asn)))
+            .collect();
 
-        // fix node values
-        for node in nodes {
-            let node_weights = graph.node_weight_mut(node.into()).unwrap();
-            *node_weights = node;
-        }
+        graph.extend_with_edges(edges.into_iter().map(|(asn1, asn2, rel)| {
+            (
+                *asn2index.get(&asn1).unwrap(),
+                *asn2index.get(&asn2).unwrap(),
+                rel,
+            )
+        }));
 
-        Topology(graph)
+        Topology { asn2index, graph }
     }
 
     pub fn from_caida(reader: impl std::io::Read) -> Result<Self, TopologyError> {
@@ -277,36 +106,198 @@ impl Topology {
     }
 
     fn asn_of(&self, asn: NodeIndex) -> u32 {
-        *self.0.node_weight(asn).unwrap()
+        *self.graph.node_weight(asn).unwrap()
+    }
+
+    fn index_of(&self, asn: u32) -> NodeIndex {
+        *self.asn2index.get(&asn).unwrap()
     }
 
     pub fn all_asns(&self) -> HashSet<u32> {
-        self.0
+        self.graph
             .raw_nodes()
             .iter()
-            .skip(1) // skip the first node, which is the root
             .map(|node| node.weight)
             .collect()
     }
 
     pub fn providers_of(&self, asn: u32) -> HashSet<u32> {
-        self.0.providers_of(asn.into())
+        let incoming = self
+            .graph
+            .edges_directed(self.index_of(asn), petgraph::Direction::Incoming)
+            .filter(|edge| edge.weight() == &RelType::ProviderToCustomer) // could be PearToPear
+            .map(|edge| edge.source());
+
+        let outgoing = self
+            .graph
+            .edges_directed(self.index_of(asn), petgraph::Direction::Outgoing)
+            .filter(|edge| edge.weight() == &RelType::CustomerToProvider)
+            .map(|edge| edge.target());
+
+        incoming
+            .chain(outgoing)
+            .map(|asn| self.asn_of(asn))
+            .collect()
     }
 
     pub fn customers_of(&self, asn: u32) -> HashSet<u32> {
-        self.0.customers_of(asn.into())
+        let outgoing = self
+            .graph
+            .edges_directed(self.index_of(asn), petgraph::Direction::Outgoing)
+            .filter(|edge| edge.weight() == &RelType::ProviderToCustomer) // could be PearToPear
+            .map(|edge| edge.target());
+
+        let incoming = self
+            .graph
+            .edges_directed(self.index_of(asn), petgraph::Direction::Incoming)
+            .filter(|edge| edge.weight() == &RelType::CustomerToProvider)
+            .map(|edge| edge.source());
+
+        outgoing
+            .chain(incoming)
+            .map(|asn| self.asn_of(asn))
+            .collect()
     }
 
     pub fn peers_of(&self, asn: u32) -> HashSet<u32> {
-        self.0.peers_of(asn.into())
+        let outgoing = self
+            .graph
+            .edges_directed(self.index_of(asn), petgraph::Direction::Outgoing)
+            .filter(|edge| edge.weight() == &RelType::PearToPear)
+            .map(|edge| edge.target());
+
+        let incoming = self
+            .graph
+            .edges_directed(self.index_of(asn), petgraph::Direction::Incoming)
+            .filter(|edge| edge.weight() == &RelType::PearToPear)
+            .map(|edge| edge.source());
+
+        outgoing
+            .chain(incoming)
+            .map(|asn| self.asn_of(asn))
+            .collect()
     }
 
-    pub fn paths_graph(&self, asn: u32) -> DiGraph<u32, RelType> {
-        self.0.paths_graph(asn.into())
+    /*
+     * Given the following topology:
+     *
+     *               ┌─────┐
+     *               │     │
+     *               └──┬──┘
+     *           ┌──────┴─────┐
+     *        ┌──▼──┐      ┌──▼──┐
+     *        │     ◄──────►     │
+     *        └──┬──┘      └──┬──┘
+     *     ┌─────┴────┐  ┌────┴────┐
+     *  ┌──▼──┐     ┌─▼──▼┐     ┌──▼──┐
+     *  │     │     │     │     │     │
+     *  └─────┘     └─────┘     └─────┘
+     *
+     *  This method generate a DAG with all paths from the given AS to all other AS-relationship
+     *  following the valley-free principle.
+     *
+     *              ┌─────┐
+     *              │     │
+     *              └──▲──┘
+     *          ┌──────┴─────┐
+     *       ┌──┴──┐      ┌──▼──┐
+     *       │     ├──────►     │
+     *       └──▲──┘      └──┬──┘
+     *    ┌─────┴────┐  ┌────┴────┐
+     * ┌──┴──┐     ┌─▼──▼┐     ┌──▼──┐
+     * │     │     │     │     │     │
+     * └─────┘     └─────┘     └─────┘
+     *
+     * You can use this graph to calculate the shortest path or even list all paths using the
+     * petgraph library.
+     */
+    pub fn paths_graph(&self, asn: u32) -> Topology {
+        let mut graph = DiGraph::new();
+
+        let node_map: HashMap<u32, NodeIndex> = self
+            .all_asns()
+            .into_iter()
+            .map(|asn| (asn, graph.add_node(asn)))
+            .collect();
+
+        let mut up_path_queue = VecDeque::<u32>::new();
+        let mut up_seen = HashSet::new();
+
+        // add first
+        up_path_queue.push_back(asn);
+        up_seen.insert(asn);
+
+        while !up_path_queue.is_empty() {
+            let asn = up_path_queue.pop_front().unwrap(); // While check if has elements
+
+            for provider_asn in self.providers_of(asn) {
+                if up_seen.contains(&provider_asn) {
+                    continue;
+                }
+                up_seen.insert(provider_asn);
+                up_path_queue.push_back(provider_asn);
+
+                graph.add_edge(
+                    *node_map.get(&asn).unwrap(),
+                    *node_map.get(&provider_asn).unwrap(),
+                    RelType::CustomerToProvider,
+                );
+            }
+        }
+
+        let mut peer_seen = HashSet::new();
+        // Iterate over all ASes reach by UP
+        // They can only do one PEAR, so we don't need a queue
+        for asn in up_seen.clone().into_iter() {
+            for peer_asn in self.peers_of(asn) {
+                peer_seen.insert(peer_asn);
+                graph.add_edge(
+                    *node_map.get(&asn).unwrap(),
+                    *node_map.get(&peer_asn).unwrap(),
+                    RelType::PearToPear,
+                );
+            }
+        }
+
+        let mut down_seen = HashSet::new();
+
+        let mut down_path_queue = VecDeque::<u32>::new();
+        up_seen
+            .iter()
+            .for_each(|asn| down_path_queue.push_back(*asn));
+        peer_seen
+            .iter()
+            .for_each(|asn| down_path_queue.push_back(*asn));
+
+        while !down_path_queue.is_empty() {
+            let asn = down_path_queue.pop_front().unwrap();
+
+            for customer_asn in self.customers_of(asn) {
+                if up_seen.contains(&customer_asn) {
+                    continue;
+                }
+
+                graph.add_edge(
+                    *node_map.get(&asn).unwrap(),
+                    *node_map.get(&customer_asn).unwrap(),
+                    RelType::ProviderToCustomer,
+                );
+
+                if !down_seen.contains(&customer_asn) && !down_path_queue.contains(&customer_asn) {
+                    down_seen.insert(customer_asn);
+                    down_path_queue.push_back(customer_asn);
+                }
+            }
+        }
+
+        Topology {
+            asn2index: node_map,
+            graph,
+        }
     }
 
     pub fn raw_graph(&self) -> &DiGraph<u32, RelType> {
-        &self.0
+        &self.graph
     }
 }
 
@@ -340,14 +331,6 @@ mod test {
             (3, 4, RelType::ProviderToCustomer),
             (2, 4, RelType::ProviderToCustomer),
         ])
-    }
-
-    #[test]
-    fn test_asn_of() {
-        let topo = Topology::from_edges(vec![(1, 2, RelType::ProviderToCustomer)]);
-
-        assert_eq!(topo.asn_of(1.into()), 1);
-        assert_eq!(topo.asn_of(2.into()), 2);
     }
 
     #[test]
@@ -448,19 +431,27 @@ mod test {
         ]);
         println!("{:?}", Dot::new(topo.raw_graph()));
 
-        let graph = topo.paths_graph(4);
+        let topo = topo.paths_graph(4);
 
-        let has_edge = |asn1: u32, asn2: u32| graph.find_edge(asn1.into(), asn2.into()).is_some();
+        let has_edge = |asn1: u32, asn2: u32| {
+            topo.raw_graph()
+                .find_edge(topo.index_of(asn1), topo.index_of(asn2))
+                .is_some()
+        };
 
-        println!("{:?}", Dot::new(&graph));
+        println!("{:?}", Dot::new(topo.raw_graph()));
 
         assert!(has_edge(4, 2));
+
         assert!(has_edge(2, 1));
-        assert!(has_edge(1, 3));
         assert!(has_edge(2, 3));
         assert!(has_edge(2, 5));
+
+        assert!(has_edge(1, 3));
+
         assert!(has_edge(3, 5));
         assert!(has_edge(3, 6));
-        assert_eq!(graph.edge_count(), 7);
+
+        assert_eq!(topo.raw_graph().edge_count(), 7);
     }
 }
