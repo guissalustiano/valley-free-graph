@@ -14,8 +14,8 @@ fn main() {
     // Use A* to find the shortest path between two nodes
     let (_len, path) = astar(
         ut_path.raw_graph(),
-        ut_path.index_of(university_of_twente_asn),
-        |finish| finish == ut_path.index_of(universidade_de_sao_paulo_asn),
+        ut_path.index_of(university_of_twente_asn).unwrap(),
+        |finish| finish == ut_path.index_of(universidade_de_sao_paulo_asn).unwrap(),
         |edge| match edge.weight() {
             // priorize pearing
             valley_free_graph::RelType::PearToPear => 0,
