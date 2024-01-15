@@ -18,4 +18,6 @@ fn main() {
     let topo_path = topo.paths_graph(4);
     println!("Path topology");
     println!("{:?}", Dot::new(&topo_path.raw_graph()));
+
+    // You can visualize the graphs online at https://dreampuf.github.io/GraphvizOnline/
 }
