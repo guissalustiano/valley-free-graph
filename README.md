@@ -1,4 +1,7 @@
 # Valley Free Graph
+
+**Merged to [bgpkit/valley-free](https://github.com/bgpkit/valley-free)**
+
 This crate analyses the AS relationship as a [petgraph](https://docs.rs/petgraph/latest/petgraph/index.html) graph, 
 generating a path DAG based on a valley-free model.
 
